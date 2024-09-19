@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package logging;
+
+service LoggingService {
+  rpc LogEvent (LogRequest) returns (LogResponse);
+}
+
+message LogRequest {
+  string source = 1;
+  string level = 2;
+  string message = 3;
+  string data = 4;
+  string timestamp = 5;
+}
+
+message LogResponse {
+  bool success = 1;
+}

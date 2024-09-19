@@ -1,0 +1,127 @@
+version: "3"
+
+networks:
+  data-service-network:
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.11.11-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
+      - ~/.docker-conf/rabbitmq/log/:/usr/rabbitmq/
+    networks:
+      - data-service-network
+    healthcheck:
+      test: [ "CMD", "rabbitmqctl", "status" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  logger_db:
+    image: mysql:latest
+    container_name: logger_db
+    env_file:
+      - ./logger-service/.env
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - ./initdb.sql:/docker-entrypoint-initdb.d/initdb.sql
+      - logger_vol:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD" ]
+      interval: 30s
+      retries: 3
+      timeout: 10s
+    networks:
+      - data-service-network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: phpmyadmin
+    env_file:
+      - ./logger-service/.env
+    ports:
+      - "127.0.0.1:8080:80"
+      - "${APP_SERVER_PRIVATE_IP}:8080:80"
+    depends_on:
+      logger_db:
+        condition: service_healthy
+    networks:
+      - data-service-network
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "127.0.0.1:4002:3000"
+      - "${APP_SERVER_PRIVATE_IP}:4002:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    user: "472"
+    env_file:
+      - ./logger-service/.env
+    depends_on:
+      logger_db:
+        condition: service_healthy
+    networks:
+      - data-service-network
+
+  logger_service:
+    container_name: logger-service
+    build: ./logger-service
+    ports:
+      - "127.0.0.1:50051:50051"
+    env_file:
+      - ./logger-service/.env
+    depends_on:
+      logger_db:
+        condition: service_healthy
+    networks:
+      - data-service-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 0.0.0.0 50051 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth_service:
+    container_name: auth-service
+    build: ./auth-service
+    ports:
+      - "127.0.0.1:4000:3000"
+      - "${APP_SERVER_PRIVATE_IP}:4000:3000"
+    env_file:
+      - ./auth-service/.env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      logger_service:
+        condition: service_healthy
+    networks:
+      - data-service-network
+    restart: on-failure
+
+  notification_service:
+    container_name: notification-service
+    build: ./notification-service
+    ports:
+      - "127.0.0.1:4001:3000"
+    env_file:
+      - ./notification-service/.env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      logger_service:
+        condition: service_healthy
+    networks:
+      - data-service-network
+    restart: on-failure
+
+volumes:
+  logger_vol:
+  grafana-data:
